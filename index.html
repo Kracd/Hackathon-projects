@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jet Shooter Game (Web Version)</title>
+    <style>
+        /* Container for the whole page */
+        body {
+            background-color: #000;
+            display: flex;
+            flex-direction: column; 
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            font-family: Arial, sans-serif;
+            color: #fff;
+        }
+
+        /* Container for all top stats */
+        #game-stats {
+            width: 800px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 5px; 
+            padding: 10px 0;
+            font-size: 24px;
+        }
+
+        /* Styles for Score and Level text */
+        .stat-box {
+            background: rgba(0, 0, 0, 0.7);
+            padding: 5px 15px;
+            border-radius: 5px;
+            border: 1px solid #fff;
+        }
+
+        /* Health Bar Container */
+        #health-bar-container {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            min-width: 250px; 
+        }
+        #health-bar-label {
+            font-size: 18px;
+            margin-bottom: 2px;
+            color: #ccc;
+        }
+
+        /* The actual bar visual */
+        #health-bar-track {
+            display: flex;
+            width: 250px; 
+            height: 20px;
+            background-color: #333; 
+            border: 2px solid white;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .health-segment {
+            height: 100%;
+            background-color: red;
+            flex-grow: 1; 
+            border-right: 1px solid rgba(0, 0, 0, 0.5); 
+            box-sizing: border-box;
+            transition: opacity 0.2s ease-out; 
+        }
+        .health-segment:last-child {
+            border-right: none;
+        }
+        .dimmed {
+            opacity: 0.2; 
+        }
+
+        /* Canvas */
+        canvas {
+            border: 2px solid #fff;
+            background-color: #000; 
+        }
+
+        /* Game Over Screen */
+        #game-over-screen {
+            position: absolute;
+            width: 800px;
+            height: 600px;
+            background: rgba(0, 0, 0, 0.9);
+            color: #fff;
+            display: none; 
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            z-index: 10;
+        }
+        #game-over-screen h1 {
+            color: #ff0000;
+        }
+        #final-score {
+            font-size: 48px;
+            margin: 20px 0;
+        }
+        #restart-button {
+            padding: 10px 20px;
+            font-size: 20px;
+            cursor: pointer;
+            background-color: #00aaff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-stats">
+        <div id="health-bar-container">
+            <span id="health-bar-label">Health:</span>
+            <div id="health-bar-track">
+                </div>
+        </div>
+        <span id="level-display" class="stat-box">Level: 1</span>
+        <span id="score-display" class="stat-box">Score: 0</span>
+    </div>
+
+    <div id="game-over-screen">
+        <h1>GAME OVER</h1>
+        <p>Your Final Score:</p>
+        <div id="final-score">0</div>
+        <button id="restart-button" onclick="restartGame()">RESTART</button>
+    </div>
+
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+    <script>
+        // --- Setup ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const WIDTH = 800;
+        const HEIGHT = 600;
+
+        // Stat elements
+        const scoreDisplay = document.getElementById('score-display');
+        const levelDisplay = document.getElementById('level-display');
+        const healthBarTrack = document.getElementById('health-bar-track');
+
+        // Game State Variables
+        let score = 0;
+        let level = 1;
+        let player_health = 15;
+        const MAX_HEALTH = 15;
+        let running = true;
+        let frame_count = 0;
+        let next_level_threshold = 100;
+
+        // Jet Properties
+        const JET_WIDTH = 60;
+        const JET_HEIGHT = 40;
+        let jet = {
+            x: 50,
+            y: HEIGHT / 2 - JET_HEIGHT / 2,
+            width: JET_WIDTH,
+            height: JET_HEIGHT,
+            color: 'blue',
+            speed: 5
+        };
+
+        // Bullet Properties
+        let bullets = [];
+        const BULLET_SPEED = 10;
+        const BULLET_WIDTH = 10;
+        const BULLET_HEIGHT = 4;
+        let can_shoot = true; 
+
+        // Enemy Properties
+        let enemies = [];
+        const ENEMY_SPEED = 3;
+        const BASE_ENEMY_WIDTH = 40;
+        const BASE_ENEMY_HEIGHT = 30;
+        const ENEMY_SPAWN_RATE = 30; 
+        const SPAWN_ZONE_HEIGHT = 500;
+        const spawn_min_y = (HEIGHT - SPAWN_ZONE_HEIGHT) / 2;
+        const spawn_max_y = spawn_min_y + SPAWN_ZONE_HEIGHT;
+        
+        // Golden Enemy Constants
+        const GOLDEN_ENEMY_SPAWN_CHANCE = 0.01; 
+        const GOLDEN_ENEMY_POINTS = 10;
+        const GOLDEN_ENEMY_WIDTH = 50;
+        const GOLDEN_ENEMY_HEIGHT = 40;
+
+
+        // --- UI Functions ---
+
+        function setupHealthBar() {
+            healthBarTrack.innerHTML = '';
+            for (let i = 0; i < MAX_HEALTH; i++) {
+                const segment = document.createElement('div');
+                segment.classList.add('health-segment');
+                segment.id = `segment-${i}`;
+                healthBarTrack.appendChild(segment);
+            }
+            updateHealthBar();
+        }
+
+        function updateHealthBar() {
+            for (let i = 0; i < MAX_HEALTH; i++) {
+                const segment = document.getElementById(`segment-${i}`);
+                if (segment) {
+                    if (i < player_health) {
+                        segment.classList.remove('dimmed');
+                    } else {
+                        segment.classList.add('dimmed');
+                    }
+                }
+            }
+        }
+
+        // --- Input Handling ---
+        let keys = {};
+        document.addEventListener('keydown', (e) => { keys[e.code] = true; });
+        document.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+        function handleInput() {
+            if (!running) return;
+
+            // Movement
+            if (keys['ArrowUp'] && jet.y > 0) {
+                jet.y -= jet.speed;
+            }
+            if (keys['ArrowDown'] && jet.y + jet.height < HEIGHT) {
+                jet.y += jet.speed;
+            }
+            if (keys['ArrowLeft'] && jet.x > 0) {
+                jet.x -= jet.speed;
+            }
+            if (keys['ArrowRight'] && jet.x + jet.width < WIDTH) {
+                jet.x += jet.speed;
+            }
+
+            // Shooting 
+            if (keys['Space'] && can_shoot) {
+                let bullet = {
+                    x: jet.x + jet.width,
+                    y: jet.y + jet.height / 2 - BULLET_HEIGHT / 2,
+                    width: BULLET_WIDTH,
+                    height: BULLET_HEIGHT,
+                    color: 'white'
+                };
+                bullets.push(bullet);
+                can_shoot = false;
+                setTimeout(() => { can_shoot = true; }, 160); 
+            }
+        }
+
+
+        // --- Game Logic ---
+
+        function updateBullets() {
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                bullets[i].x += BULLET_SPEED;
+                if (bullets[i].x > WIDTH) {
+                    bullets.splice(i, 1);
+                }
+            }
+        }
+
+        function spawnEnemy() {
+            if (frame_count % ENEMY_SPAWN_RATE === 0) {
+                
+                let isGolden = Math.random() < GOLDEN_ENEMY_SPAWN_CHANCE;
+                let enemy_type = isGolden ? 'golden' : 'normal';
+
+                let enemy_width, enemy_height, enemy_color;
+
+                if (isGolden) {
+                    enemy_width = GOLDEN_ENEMY_WIDTH;
+                    enemy_height = GOLDEN_ENEMY_HEIGHT;
+                    enemy_color = 'gold'; 
+                } else {
+                    enemy_width = BASE_ENEMY_WIDTH + Math.floor(Math.random() * 11) - 5; 
+                    enemy_height = BASE_ENEMY_HEIGHT + Math.floor(Math.random() * 11) - 5;
+                    let r = Math.floor(Math.random() * 106) + 150; 
+                    let g = Math.floor(Math.random() * 51); 
+                    let b = Math.floor(Math.random() * 51); 
+                    enemy_color = `rgb(${r}, ${g}, ${b})`;
+                }
+
+                let y_pos = Math.floor(Math.random() * (spawn_max_y - spawn_min_y - enemy_height)) + spawn_min_y;
+
+                let enemy = {
+                    x: WIDTH,
+                    y: y_pos,
+                    width: enemy_width,
+                    height: enemy_height,
+                    color: enemy_color,
+                    type: enemy_type
+                };
+                enemies.push(enemy);
+            }
+        }
+
+        function updateEnemies() {
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                enemies[i].x -= ENEMY_SPEED;
+                if (enemies[i].x + enemies[i].width < 0) {
+                    enemies.splice(i, 1);
+                }
+            }
+        }
+
+        function checkCollision(rect1, rect2) {
+            // Collision uses the simple bounding boxes (x, y, width, height)
+            return rect1.x < rect2.x + rect2.width &&
+                   rect1.x + rect1.width > rect2.x &&
+                   rect1.y < rect2.y + rect2.height &&
+                   rect1.y + rect1.height > rect2.y;
+        }
+
+        function checkCollisions() {
+            // Bullet-Enemy Collisions
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                let bullet = bullets[i];
+                for (let j = enemies.length - 1; j >= 0; j--) {
+                    let enemy = enemies[j];
+
+                    if (checkCollision(bullet, enemy)) {
+                        bullets.splice(i, 1); 
+                        enemies.splice(j, 1); 
+                        
+                        let points = enemy.type === 'golden' ? GOLDEN_ENEMY_POINTS : 1;
+                        score += points;
+
+                        scoreDisplay.textContent = `Score: ${score}`;
+
+                        // Level Up Logic (per 100 points)
+                        if (score >= next_level_threshold) {
+                            level += 1;
+                            levelDisplay.textContent = `Level: ${level}`;
+                            next_level_threshold += 100; 
+                        }
+
+                        break;
+                    }
+                }
+            }
+
+            // Jet-Enemy Collisions
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                let enemy = enemies[i];
+
+                if (checkCollision(jet, enemy)) {
+                    enemies.splice(i, 1); 
+                    player_health -= 1;
+                    updateHealthBar(); 
+
+                    if (player_health <= 0) {
+                        running = false;
+                        showGameOver();
+                        break;
+                    }
+                }
+            }
+        }
+
+
+        // --- Drawing Functions with Detail ---
+
+        function drawJet(rect) {
+    const x = rect.x;
+    const y = rect.y;
+    const w = rect.width; // 60
+    const h = rect.height; // 40
+    const mainColor = '#777777'; // Neutral Gray
+    
+    // We remove: const outlineColor = 'white';
+    // We remove: const outlineColor = 'white'; 
+
+    // 1. Main Trapezoid Body
+    ctx.beginPath();
+    ctx.moveTo(x, y + h * 0.2);              // Top-left of trapezoid
+    ctx.lineTo(x + w * 0.9, y + h * 0.2);    // Top-right of trapezoid
+    ctx.lineTo(x + w, y + h * 0.5);          // Pointy rear tip
+    ctx.lineTo(x + w * 0.9, y + h * 0.8);    // Bottom-right of trapezoid
+    ctx.lineTo(x, y + h * 0.8);              // Bottom-left of trapezoid
+    ctx.closePath();
+    ctx.fillStyle = mainColor;
+    ctx.fill();
+    
+    // 2. Top Wing (Triangle)
+    ctx.beginPath();
+    ctx.moveTo(x + w * 0.2, y + h * 0.2);    // Base point 1 (on trapezoid)
+    ctx.lineTo(x + w * 0.6, y);              // Wing tip
+    ctx.lineTo(x + w * 0.6, y + h * 0.2);    // Base point 2 (on trapezoid)
+    ctx.closePath();
+    ctx.fillStyle = mainColor;
+    ctx.fill();
+
+    // 3. Bottom Wing (Triangle)
+    ctx.beginPath();
+    ctx.moveTo(x + w * 0.2, y + h * 0.8);    // Base point 1 (on trapezoid)
+    ctx.lineTo(x + w * 0.6, y + h);          // Wing tip
+    ctx.lineTo(x + w * 0.6, y + h * 0.8);    // Base point 2 (on trapezoid)
+    ctx.closePath();
+    ctx.fillStyle = mainColor;
+    ctx.fill();
+
+    // 4. White Border (outline) - Removed the actual stroke commands
+    // We remove: ctx.strokeStyle = outlineColor;
+    // We remove: ctx.lineWidth = 2;
+    // We remove: ctx.stroke(); 
+}
+        function drawEnemy(enemy) {
+            const x = enemy.x;
+            const y = enemy.y;
+            const w = enemy.width;
+            const h = enemy.height;
+            
+            const mainColor = enemy.color;
+            const detailColor = enemy.type === 'golden' ? '#ffd700' : '#880000'; // Darker red/yellow
+
+            ctx.beginPath();
+
+            // 1. Main Body (Trapezoid, pointing left)
+            ctx.moveTo(x + w, y); // Top right
+            ctx.lineTo(x, y + h * 0.15); // Nose point 1
+            ctx.lineTo(x, y + h * 0.85); // Nose point 2
+            ctx.lineTo(x + w, y + h); // Bottom right
+            ctx.closePath();
+            
+            // Gradient for 3D effect
+            const bodyGradient = ctx.createLinearGradient(x, y, x + w, y);
+            bodyGradient.addColorStop(0, mainColor);
+            bodyGradient.addColorStop(1, detailColor);
+            ctx.fillStyle = bodyGradient;
+            ctx.fill();
+
+            // 2. Wing/Fins (Two small triangles)
+            ctx.fillStyle = detailColor;
+            ctx.beginPath();
+            ctx.moveTo(x + w * 0.6, y + h * 0.2);
+            ctx.lineTo(x + w * 0.8, y + h * 0.2);
+            ctx.lineTo(x + w * 0.6, y - h * 0.1); // Top fin point
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.beginPath();
+            ctx.moveTo(x + w * 0.6, y + h * 0.8);
+            ctx.lineTo(x + w * 0.8, y + h * 0.8);
+            ctx.lineTo(x + w * 0.6, y + h * 1.1); // Bottom fin point
+            ctx.closePath();
+            ctx.fill();
+
+            // 3. Black Border (outline)
+            ctx.strokeStyle = 'black';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            // 4. Highlight for Golden Enemy
+            if (enemy.type === 'golden') {
+                ctx.strokeStyle = '#fff8dc'; // Light cream highlight
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+        }
+        
+        function drawBullet(rect) { 
+            const x = rect.x;
+            const y = rect.y;
+            const w = rect.width;
+            const h = rect.height;
+            
+            ctx.beginPath();
+            
+            // 1. Main body (rectangle) - Bright white
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(x, y, w, h);
+            
+            // 2. Afterburner/Tail (faded yellow/orange trail)
+            const trailWidth = 5;
+            const trailX = x - trailWidth;
+            
+            const trailGradient = ctx.createLinearGradient(trailX, y, x, y);
+            trailGradient.addColorStop(0, 'rgba(255, 100, 0, 0.4)'); // Orange faded
+            trailGradient.addColorStop(1, 'rgba(255, 255, 255, 0.7)'); // White close to the body
+            
+            ctx.fillStyle = trailGradient;
+            ctx.fillRect(trailX, y, trailWidth, h);
+
+            // 3. Tip (point)
+            ctx.beginPath();
+            ctx.moveTo(x + w, y);
+            ctx.lineTo(x + w + 3, y + h / 2); // Sharp point
+            ctx.lineTo(x + w, y + h);
+            ctx.closePath();
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+        }
+
+        function drawGame() {
+            ctx.clearRect(0, 0, WIDTH, HEIGHT);
+
+            // Draw Spawn Zone Debug Box
+            ctx.strokeStyle = 'rgba(100, 100, 100, 0.5)';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(0, spawn_min_y, WIDTH, SPAWN_ZONE_HEIGHT);
+
+            // Draw Jet
+            drawJet(jet);
+
+            // Draw Bullets with detailed function
+            bullets.forEach(bullet => {
+                drawBullet(bullet);
+            });
+
+            // Draw Enemies with detailed function
+            enemies.forEach(enemy => {
+                drawEnemy(enemy);
+            });
+        }
+
+
+        // --- Main Loop and Restart Functions ---
+
+        function gameLoop() {
+            if (running) {
+                handleInput();
+                updateBullets();
+                spawnEnemy();
+                updateEnemies();
+                checkCollisions();
+                drawGame();
+                frame_count++;
+            }
+            requestAnimationFrame(gameLoop);
+        }
+
+        function showGameOver() {
+            document.getElementById('final-score').textContent = score;
+            document.getElementById('game-over-screen').style.display = 'flex';
+        }
+
+        function restartGame() {
+            score = 0;
+            level = 1;
+            player_health = MAX_HEALTH;
+            jet.x = 50;
+            jet.y = HEIGHT / 2 - JET_HEIGHT / 2;
+            bullets = [];
+            enemies = [];
+            frame_count = 0;
+            
+            next_level_threshold = 100;
+
+            scoreDisplay.textContent = `Score: ${score}`;
+            levelDisplay.textContent = `Level: ${level}`;
+            updateHealthBar();
+            
+            document.getElementById('game-over-screen').style.display = 'none';
+
+            running = true;
+        }
+
+        // Initialize the health bar and start
+        setupHealthBar();
+        gameLoop();
+    </script>
+</body>
+</html>
